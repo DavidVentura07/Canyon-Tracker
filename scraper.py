@@ -125,7 +125,39 @@ def scrape() -> dict:
         print(f"🌐 Abriendo {PRODUCT_URL}")
         page.goto(PRODUCT_URL, wait_until="domcontentloaded", timeout=60_000)
 
-        # Espera a que cargue el precio principal
+        # Espera inicial para que cargue el banner de cookies
+        page.wait_for_timeout(3_000)
+
+        # ── 0. Cerrar banner de cookies ──────────────────────────────────────
+        # Canyon usa OneTrust — intentamos varios selectores posibles
+        cookie_selectors = [
+            "#onetrust-accept-btn-handler",          # botón estándar OneTrust
+            "button#onetrust-accept-btn-handler",
+            "[id*='accept'][id*='cookie']",
+            "button:has-text('Aceptar todas')",
+            "button:has-text('Aceptar todo')",
+            "button:has-text('Accept all')",
+            "button:has-text('Aceptar')",
+            ".js-cookie-accept",
+            "[data-testid='cookie-accept']",
+        ]
+        cookie_dismissed = False
+        for sel in cookie_selectors:
+            try:
+                btn = page.locator(sel).first
+                if btn.is_visible(timeout=2_000):
+                    btn.click()
+                    page.wait_for_timeout(1_500)
+                    print(f"🍪 Banner de cookies cerrado (selector: {sel})")
+                    cookie_dismissed = True
+                    break
+            except Exception:
+                continue
+
+        if not cookie_dismissed:
+            print("⚠️  No se encontró banner de cookies — continuando de todas formas")
+
+        # Espera a que cargue el precio principal (ahora sin el banner)
         try:
             page.wait_for_selector("[data-test-id='product-price'], .productConfiguration__price, .js-product-price", timeout=20_000)
         except PlaywrightTimeoutError:
@@ -222,6 +254,18 @@ def scrape() -> dict:
             print(f"⚠️  No se pudo confirmar disponibilidad de talla {TARGET_SIZE}")
 
         # ── 4. Screenshot de evidencia ────────────────────────────────────────
+        # Scroll al área del precio para que sea visible en el screenshot
+        try:
+            price_el = page.locator(
+                "[data-test-id='product-price'], "
+                ".productConfiguration__price, "
+                "[class*='price']"
+            ).first
+            if price_el.is_visible():
+                price_el.scroll_into_view_if_needed()
+                page.wait_for_timeout(600)
+        except Exception:
+            pass
         page.screenshot(path="last_check.png", full_page=False)
         print("📸 Screenshot guardado como last_check.png")
 
