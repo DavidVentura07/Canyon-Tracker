@@ -129,23 +129,21 @@ def scrape() -> dict:
         page.wait_for_timeout(3_000)
 
         # ── 0. Cerrar banner de cookies ──────────────────────────────────────
-        # Canyon usa un modal propio: data-modal-name="cookiesModal", clase js-cookies
+        # Confirmado en screenshot: el botón dice exactamente "Permitir todas"
         cookie_selectors = [
-            "[data-modal-name='cookiesModal'] button:has-text('Aceptar todas')",
-            "[data-modal-name='cookiesModal'] button:has-text('Aceptar todo')",
-            ".cookiesModal button:has-text('Aceptar')",
-            ".js-cookies button:has-text('Aceptar')",
-            "[role='dialog'][aria-label*='cookies' i] button:has-text('Aceptar')",
+            "button:has-text('Permitir todas')",
+            "button:has-text('Permitir todo')",
+            "[data-modal-name='cookiesModal'] button:has-text('Permitir todas')",
+            ".cookiesModal button:has-text('Permitir')",
             "#onetrust-accept-btn-handler",          # fallback OneTrust (otros sitios)
             "button:has-text('Aceptar todas')",
-            "button:has-text('Aceptar todo')",
             "button:has-text('Accept all')",
         ]
         cookie_dismissed = False
         for sel in cookie_selectors:
             try:
                 btn = page.locator(sel).first
-                if btn.is_visible(timeout=2_000):
+                if btn.is_visible(timeout=3_000):
                     btn.click(timeout=5_000, force=True)
                     page.wait_for_timeout(1_500)
                     print(f"🍪 Banner de cookies cerrado (selector: {sel})")
@@ -154,17 +152,33 @@ def scrape() -> dict:
             except Exception:
                 continue
 
-        # Si ningún botón funcionó, forzamos cierre quitando el modal del DOM
-        if not cookie_dismissed:
+        # Verificamos si el modal sigue visible aunque hayamos hecho click
+        try:
+            still_visible = page.locator("text=Las cookies mejoran tu experiencia").is_visible(timeout=1_000)
+        except Exception:
+            still_visible = False
+
+        if not cookie_dismissed or still_visible:
+            # Fallback agresivo: remover cualquier overlay/modal de cookies vía JS
             try:
                 page.evaluate("""
                     () => {
+                        // Remover por texto (busca el dialog que contiene el título de cookies)
+                        document.querySelectorAll('[role="dialog"]').forEach(el => {
+                            if (el.textContent.includes('cookies') || el.textContent.includes('Cookies')) {
+                                el.remove();
+                            }
+                        });
+                        // Remover por selectores conocidos de Canyon
                         document.querySelectorAll(
-                            '[data-modal-name="cookiesModal"], .js-cookies, .cookiesModal'
+                            '[data-modal-name="cookiesModal"], .js-cookies, .cookiesModal, .modal__container'
                         ).forEach(el => el.remove());
+                        // Remover cualquier overlay oscuro que tape la pantalla
+                        document.querySelectorAll('[class*="overlay"], [class*="backdrop"]').forEach(el => el.remove());
                         document.body.style.overflow = 'auto';
                     }
                 """)
+                page.wait_for_timeout(1_000)
                 print("🍪 Banner de cookies removido por fuerza (vía JS)")
                 cookie_dismissed = True
             except Exception as e:
@@ -186,9 +200,15 @@ def scrape() -> dict:
         try:
             page.evaluate("""
                 () => {
+                    document.querySelectorAll('[role="dialog"]').forEach(el => {
+                        if (el.textContent.includes('cookies') || el.textContent.includes('Cookies')) {
+                            el.remove();
+                        }
+                    });
                     document.querySelectorAll(
-                        '[data-modal-name="cookiesModal"], .js-cookies, .cookiesModal'
+                        '[data-modal-name="cookiesModal"], .js-cookies, .cookiesModal, .modal__container, [class*="overlay"], [class*="backdrop"]'
                     ).forEach(el => el.remove());
+                    document.body.style.overflow = 'auto';
                 }
             """)
         except Exception:
@@ -281,6 +301,23 @@ def scrape() -> dict:
             print(f"⚠️  No se pudo confirmar disponibilidad de talla {TARGET_SIZE}")
 
         # ── 4. Screenshot de evidencia ────────────────────────────────────────
+        # Última limpieza por si el modal de cookies reapareció
+        try:
+            page.evaluate("""
+                () => {
+                    document.querySelectorAll('[role="dialog"]').forEach(el => {
+                        if (el.textContent.includes('cookies') || el.textContent.includes('Cookies')) {
+                            el.remove();
+                        }
+                    });
+                    document.querySelectorAll(
+                        '[data-modal-name="cookiesModal"], .js-cookies, .cookiesModal, .modal__container, [class*="overlay"], [class*="backdrop"]'
+                    ).forEach(el => el.remove());
+                }
+            """)
+        except Exception:
+            pass
+
         # Scroll al área del precio para que sea visible en el screenshot
         try:
             price_el = page.locator(
