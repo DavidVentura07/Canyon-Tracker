@@ -129,24 +129,24 @@ def scrape() -> dict:
         page.wait_for_timeout(3_000)
 
         # ── 0. Cerrar banner de cookies ──────────────────────────────────────
-        # Canyon usa OneTrust — intentamos varios selectores posibles
+        # Canyon usa un modal propio: data-modal-name="cookiesModal", clase js-cookies
         cookie_selectors = [
-            "#onetrust-accept-btn-handler",          # botón estándar OneTrust
-            "button#onetrust-accept-btn-handler",
-            "[id*='accept'][id*='cookie']",
+            "[data-modal-name='cookiesModal'] button:has-text('Aceptar todas')",
+            "[data-modal-name='cookiesModal'] button:has-text('Aceptar todo')",
+            ".cookiesModal button:has-text('Aceptar')",
+            ".js-cookies button:has-text('Aceptar')",
+            "[role='dialog'][aria-label*='cookies' i] button:has-text('Aceptar')",
+            "#onetrust-accept-btn-handler",          # fallback OneTrust (otros sitios)
             "button:has-text('Aceptar todas')",
             "button:has-text('Aceptar todo')",
             "button:has-text('Accept all')",
-            "button:has-text('Aceptar')",
-            ".js-cookie-accept",
-            "[data-testid='cookie-accept']",
         ]
         cookie_dismissed = False
         for sel in cookie_selectors:
             try:
                 btn = page.locator(sel).first
                 if btn.is_visible(timeout=2_000):
-                    btn.click()
+                    btn.click(timeout=5_000, force=True)
                     page.wait_for_timeout(1_500)
                     print(f"🍪 Banner de cookies cerrado (selector: {sel})")
                     cookie_dismissed = True
@@ -154,8 +154,23 @@ def scrape() -> dict:
             except Exception:
                 continue
 
+        # Si ningún botón funcionó, forzamos cierre quitando el modal del DOM
         if not cookie_dismissed:
-            print("⚠️  No se encontró banner de cookies — continuando de todas formas")
+            try:
+                page.evaluate("""
+                    () => {
+                        document.querySelectorAll(
+                            '[data-modal-name="cookiesModal"], .js-cookies, .cookiesModal'
+                        ).forEach(el => el.remove());
+                        document.body.style.overflow = 'auto';
+                    }
+                """)
+                print("🍪 Banner de cookies removido por fuerza (vía JS)")
+                cookie_dismissed = True
+            except Exception as e:
+                print(f"⚠️  No se pudo remover banner de cookies: {e}")
+
+        page.wait_for_timeout(1_000)
 
         # Espera a que cargue el precio principal (ahora sin el banner)
         try:
@@ -167,6 +182,18 @@ def scrape() -> dict:
         page.wait_for_timeout(4_000)
 
         # ── 1. Seleccionar color Silver Mercury ──────────────────────────────
+        # Por si el modal de cookies reapareció o quedó residual, lo removemos de nuevo
+        try:
+            page.evaluate("""
+                () => {
+                    document.querySelectorAll(
+                        '[data-modal-name="cookiesModal"], .js-cookies, .cookiesModal'
+                    ).forEach(el => el.remove());
+                }
+            """)
+        except Exception:
+            pass
+
         try:
             color_btn = page.locator(
                 f"[aria-label*='{TARGET_COLOR}'], "
@@ -174,13 +201,13 @@ def scrape() -> dict:
                 f"button:has-text('{TARGET_COLOR}')"
             ).first
             if color_btn.is_visible():
-                color_btn.click()
+                color_btn.click(timeout=8_000, force=True)
                 page.wait_for_timeout(2_000)
                 print(f"🎨 Color '{TARGET_COLOR}' seleccionado")
             else:
                 print(f"⚠️  Botón de color '{TARGET_COLOR}' no visible — continuando sin seleccionar")
         except Exception as e:
-            print(f"⚠️  No se pudo seleccionar color: {e}")
+            print(f"⚠️  No se pudo seleccionar color (no crítico, continuando): {e}")
 
         # ── 2. Extraer precio ────────────────────────────────────────────────
         price_usd = None
